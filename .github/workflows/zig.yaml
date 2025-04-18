@@ -6,19 +6,28 @@ on:
       - "v*.*.*"
 
 jobs:
-
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Go
+    - name: Set up ziglang
       uses: mlugg/setup-zig@v1
       with:
         version: '0.11.0'
 
+    - name: Set up msvc
+      uses: ilammy/msvc-dev-cmd@v1
+
     - name: Build
       run: zig build
+
+    - name: Test
+      run: |
+        .\zig-out\bin\zigdonut.exe testpe\rusthello32.exe instance32
+        .\zig-out\bin\loader32.exe
+        .\zig-out\bin\zigdonut.exe testpe\rusthello64.exe instance64
+        .\zig-out\bin\loader64.exe
 
     - name: Release
       uses: softprops/action-gh-release@v1
