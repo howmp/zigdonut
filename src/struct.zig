@@ -285,3 +285,78 @@ pub const WIN32_WIN_NT_WIN7: u16 = 0x0601;
 pub const WIN32_WIN_NT_WIN8: u16 = 0x0602;
 pub const WIN32_WIN_NT_WINBLUE: u16 = 0x0603;
 pub const WIN32_WIN_NT_WIN10: u16 = 0x0A00;
+
+// elf
+
+pub const Elf64_Ehdr = extern struct {
+    e_ident: [16]u8,
+    e_type: u16,
+    e_machine: u16,
+    e_version: u32,
+    e_entry: u64,
+    e_phoff: u64,
+    e_shoff: u64,
+    e_flags: u32,
+    e_ehsize: u16,
+    e_phentsize: u16,
+    e_phnum: u16,
+    e_shentsize: u16,
+    e_shnum: u16,
+    e_shstrndx: u16,
+};
+
+pub const Elf64_Phdr = extern struct {
+    p_type: u32,
+    p_flags: u32,
+    p_offset: u64,
+    p_vaddr: u64,
+    p_paddr: u64,
+    p_filesz: u64,
+    p_memsz: u64,
+    p_align: u64,
+};
+
+pub const Elf64_Dyn = extern struct {
+    d_tag: i64,
+    d_un: extern union {
+        d_val: u64,
+        d_ptr: u64,
+    },
+};
+
+pub const Elf64_Rela = extern struct {
+    r_offset: u64,
+    r_info: u64,
+    r_addend: i64,
+};
+// ELF constants
+pub const ELFMAG = "\x7fELF";
+pub const SELFMAG: usize = 4;
+pub const EI_CLASS: usize = 4;
+pub const EI_DATA: usize = 5;
+pub const ELFCLASS64: u8 = 2;
+pub const ELFDATA2LSB: u8 = 1;
+pub const ET_DYN: u16 = 3;
+pub const EM_X86_64: u16 = 62;
+
+pub const PT_LOAD: u32 = 1;
+pub const PT_DYNAMIC: u32 = 2;
+
+pub const PF_X: u32 = 1;
+pub const PF_W: u32 = 2;
+pub const PF_R: u32 = 4;
+
+pub const DT_NULL: i64 = 0;
+pub const DT_RELA: i64 = 7;
+pub const DT_RELASZ: i64 = 8;
+
+pub const R_X86_64_RELATIVE: u32 = 8;
+
+// Auxiliary vector types
+pub const AT_NULL: usize = 0;
+pub const AT_PHDR: usize = 3;
+pub const AT_PHENT: usize = 4;
+pub const AT_PHNUM: usize = 5;
+pub const AT_PAGESZ: usize = 6;
+pub const AT_ENTRY: usize = 9;
+pub const AT_RANDOM: usize = 25;

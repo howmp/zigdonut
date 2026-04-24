@@ -1,18 +1,30 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const windows = std.os.windows;
-const win32 = @import("struct.zig");
+const st = @import("struct.zig");
 const depack = @import("depack.zig");
 const string = []const u8;
 pub const std_options = struct {
     pub const log_level = if (builtin.output_mode == .Exe) .info else .err;
 };
-pub fn main() !void {
+
+pub fn readFile(filename: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    var f = try std.fs.cwd().openFile(filename, .{});
+    defer f.close();
+    var size = try f.getEndPos();
+    var data = try allocator.alloc(u8, @truncate(size));
+    _ = try f.readAll(data);
+    return data;
+}
+pub fn main() void {
     var allocator = std.heap.page_allocator;
-    var data = try @import("generator.zig").readFile(
+    var data = readFile(
         "instance" ++ if (@sizeOf(usize) == 4) "32" else "64",
         allocator,
-    );
+    ) catch {
+        std.log.err("Failed to read file", .{});
+        return;
+    };
     defer allocator.free(data);
     // data skip asm call $+instlen
     go(@ptrCast(data[5..]));
@@ -87,10 +99,10 @@ inline fn x(comptime str: string) []u8 {
 }
 inline fn runPE(apis: *apiAddr, inst: []u8, wipeHeader: bool) i32 {
     std.log.info("[+]runPE", .{});
-    var dos: *win32.IMAGE_DOS_HEADER = @ptrCast(@alignCast(inst.ptr));
-    var nt: *win32.IMAGE_NT_HEADERS = rva2va(*win32.IMAGE_NT_HEADERS, @ptrCast(inst.ptr), @as(u32, @bitCast(dos.e_lfanew)));
-    var hasreloc = (nt.FileHeader.Characteristics & win32.IMAGE_FILE_RELOCS_STRIPPED) == 0;
-    var isdll = (nt.FileHeader.Characteristics & win32.IMAGE_FILE_DLL) != 0;
+    var dos: *st.IMAGE_DOS_HEADER = @ptrCast(@alignCast(inst.ptr));
+    var nt: *st.IMAGE_NT_HEADERS = rva2va(*st.IMAGE_NT_HEADERS, @ptrCast(inst.ptr), @as(u32, @bitCast(dos.e_lfanew)));
+    var hasreloc = (nt.FileHeader.Characteristics & st.IMAGE_FILE_RELOCS_STRIPPED) == 0;
+    var isdll = (nt.FileHeader.Characteristics & st.IMAGE_FILE_DLL) != 0;
     var tmp = apis.VirtualAlloc.?(
         if (hasreloc) 0 else nt.OptionalHeader.ImageBase,
         nt.OptionalHeader.SizeOfImage + 4096,
@@ -104,16 +116,16 @@ inline fn runPE(apis: *apiAddr, inst: []u8, wipeHeader: bool) i32 {
 
     var cs: []u8 = tmp[0 .. nt.OptionalHeader.SizeOfImage + 4096];
     std.log.info("[+]alloc at 0x{X}", .{@intFromPtr(cs.ptr)});
-    var tlsldr = @as(*win32.LDR_DATA_TABLE_ENTRY, @alignCast(@ptrCast(&tmp[nt.OptionalHeader.SizeOfImage])));
+    var tlsldr = @as(*st.LDR_DATA_TABLE_ENTRY, @alignCast(@ptrCast(&tmp[nt.OptionalHeader.SizeOfImage])));
     std.log.info("[+]copy header", .{});
     var headerLen = nt.OptionalHeader.SizeOfHeaders;
     std.mem.copyForwards(u8, cs[0..headerLen], inst[0..headerLen]);
-    var sh: [*]win32.IMAGE_SECTION_HEADER = @ptrCast(
+    var sh: [*]st.IMAGE_SECTION_HEADER = @ptrCast(
         @alignCast(
             inst.ptr + @as(u32, @bitCast(dos.e_lfanew)) + @offsetOf(
-                win32.IMAGE_NT_HEADERS,
+                st.IMAGE_NT_HEADERS,
                 "OptionalHeader",
-            ) + @sizeOf(win32.IMAGE_OPTIONAL_HEADER),
+            ) + @sizeOf(st.IMAGE_OPTIONAL_HEADER),
         ),
     );
     std.log.info("[+]copy section", .{});
@@ -125,16 +137,16 @@ inline fn runPE(apis: *apiAddr, inst: []u8, wipeHeader: bool) i32 {
         std.mem.copyForwards(u8, cs[p1 .. p1 + len], inst[p2 .. p2 + len]);
     }
 
-    var rva = nt.OptionalHeader.DataDirectory[win32.IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
+    var rva = nt.OptionalHeader.DataDirectory[st.IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
     if (rva != 0) {
         std.log.info("[+]reloc", .{});
-        var ibr: [*c]win32.IMAGE_BASE_RELOCATION = rva2va([*c]win32.IMAGE_BASE_RELOCATION, cs.ptr, rva);
+        var ibr: [*c]st.IMAGE_BASE_RELOCATION = rva2va([*c]st.IMAGE_BASE_RELOCATION, cs.ptr, rva);
         while (ibr.*.VirtualAddress != 0) {
             std.log.info("[+] ibr:0x{X} count:{}", .{ ibr.*.VirtualAddress, ibr.*.SizeOfBlock });
-            var list: [*c]win32.IMAGE_RELOC = @ptrCast(ibr + 1);
+            var list: [*c]st.IMAGE_RELOC = @ptrCast(ibr + 1);
 
             while (@intFromPtr(list) != @intFromPtr(ibr) + ibr.*.SizeOfBlock) {
-                if (list.*.typ == win32.IMAGE_REL_TYPE) {
+                if (list.*.typ == st.IMAGE_REL_TYPE) {
                     // *(ULONG_PTR*)((PBYTE)cs + ibr->VirtualAddress + list->offset) += (ULONG_PTR)ofs;
                     var ptr: *align(1) usize = @alignCast(@ptrCast(cs.ptr + ibr.*.VirtualAddress + list.*.offset));
                     var newptr = ptr.* + @as(usize, @intFromPtr(cs.ptr)) - nt.OptionalHeader.ImageBase;
@@ -146,11 +158,11 @@ inline fn runPE(apis: *apiAddr, inst: []u8, wipeHeader: bool) i32 {
         }
     }
 
-    rva = nt.OptionalHeader.DataDirectory[win32.IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+    rva = nt.OptionalHeader.DataDirectory[st.IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
     if (rva != 0) {
         std.log.info("[+]import", .{});
-        var imp: [*c]win32.IMAGE_IMPORT_DESCRIPTOR = rva2va(
-            [*c]win32.IMAGE_IMPORT_DESCRIPTOR,
+        var imp: [*c]st.IMAGE_IMPORT_DESCRIPTOR = rva2va(
+            [*c]st.IMAGE_IMPORT_DESCRIPTOR,
             cs.ptr,
             rva,
         );
@@ -162,8 +174,8 @@ inline fn runPE(apis: *apiAddr, inst: []u8, wipeHeader: bool) i32 {
 
             var dll = apis.GetModuleHandleA.?(name) orelse apis.LoadLibraryA.?(name);
             zero(name);
-            var oft = rva2va([*c]win32.IMAGE_THUNK_DATA, cs.ptr, imp.*.OriginalFirstThunk);
-            var ft = rva2va([*c]win32.IMAGE_THUNK_DATA, cs.ptr, imp.*.FirstThunk);
+            var oft = rva2va([*c]st.IMAGE_THUNK_DATA, cs.ptr, imp.*.OriginalFirstThunk);
+            var ft = rva2va([*c]st.IMAGE_THUNK_DATA, cs.ptr, imp.*.FirstThunk);
             while (oft.*.AddressOfData != 0) : ({
                 oft += 1;
                 ft += 1;
@@ -172,7 +184,7 @@ inline fn runPE(apis: *apiAddr, inst: []u8, wipeHeader: bool) i32 {
                     std.log.info("[+]  ordinal:0x{X}", .{oft.*.IMAGE_ORDINAL()});
                     ft.*.Function = apis.GetProcAddress.?(dll, @ptrFromInt(oft.*.IMAGE_ORDINAL()));
                 } else {
-                    var ibn = rva2va(*win32.IMAGE_IMPORT_BY_NAME, cs.ptr, oft.*.AddressOfData);
+                    var ibn = rva2va(*st.IMAGE_IMPORT_BY_NAME, cs.ptr, oft.*.AddressOfData);
                     var apiname: [*c]u8 = @ptrCast(&ibn.Name[0]);
                     std.log.info("[+]  name:{s}", .{apiname});
                     ft.*.Function = apis.GetProcAddress.?(dll, apiname);
@@ -190,9 +202,9 @@ inline fn runPE(apis: *apiAddr, inst: []u8, wipeHeader: bool) i32 {
         var ncs = cs[p1 .. p1 + len];
         // if IMAGE_SCN_MEM_EXECUTE change Protect PAGE_EXECUTEXXXX
         var Characteristics = sh[i].Characteristics;
-        if (Characteristics & win32.IMAGE_SCN_MEM_EXECUTE != 0) {
+        if (Characteristics & st.IMAGE_SCN_MEM_EXECUTE != 0) {
             var protect: windows.DWORD = windows.PAGE_EXECUTE_READ;
-            if (Characteristics & win32.IMAGE_SCN_MEM_WRITE != 0) {
+            if (Characteristics & st.IMAGE_SCN_MEM_WRITE != 0) {
                 protect = windows.PAGE_EXECUTE_READWRITE;
             }
             std.log.info("[+] restore {s} to 0x{X}", .{ sh[i].Name, protect });
@@ -210,30 +222,30 @@ inline fn runPE(apis: *apiAddr, inst: []u8, wipeHeader: bool) i32 {
         tlsldr.DllBase = cs.ptr;
         if (@sizeOf(usize) == 8) {
             std.log.info("[+] call LdrpHandleTlsData: 0x{X}", .{LdrpHandleTlsData});
-            @as(win32.FnStdCallLdrpHandleTlsData, @ptrFromInt(LdrpHandleTlsData))(tlsldr);
+            @as(st.FnStdCallLdrpHandleTlsData, @ptrFromInt(LdrpHandleTlsData))(tlsldr);
         } else {
             var peb = std.os.windows.peb();
             var version = @as(u16, @truncate(peb.OSMajorVersion)) << 8 | @as(u16, @truncate(peb.OSMinorVersion));
             // version >= win8.1 callconv is thiscall
             // IsWindows8Point1OrGreater
-            if (version >= win32.WIN32_WIN_NT_WINBLUE) {
+            if (version >= st.WIN32_WIN_NT_WINBLUE) {
                 std.log.info("[+] version 0x{X},call LdrpHandleTlsData(thiscall): 0x{X}", .{ version, LdrpHandleTlsData });
-                @as(win32.FnThisCallLdrpHandleTlsData, @ptrFromInt(LdrpHandleTlsData))(tlsldr);
+                @as(st.FnThisCallLdrpHandleTlsData, @ptrFromInt(LdrpHandleTlsData))(tlsldr);
             } else {
                 std.log.info("[+] version 0x{X},call LdrpHandleTlsData(stdcall): 0x{X}", .{ version, LdrpHandleTlsData });
-                @as(win32.FnStdCallLdrpHandleTlsData, @ptrFromInt(LdrpHandleTlsData))(tlsldr);
+                @as(st.FnStdCallLdrpHandleTlsData, @ptrFromInt(LdrpHandleTlsData))(tlsldr);
             }
         }
     } else {
         std.log.info("[!]findLdrpHandleTlsData fail", .{});
     }
-    rva = nt.OptionalHeader.DataDirectory[win32.IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress;
+    rva = nt.OptionalHeader.DataDirectory[st.IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress;
     if (rva != 0) {
-        var tls = rva2va(*win32.IMAGE_TLS_DIRECTORY, cs.ptr, rva);
-        var callback: [*c]win32.PIMAGE_TLS_CALLBACK = tls.AddressOfCallBacks;
+        var tls = rva2va(*st.IMAGE_TLS_DIRECTORY, cs.ptr, rva);
+        var callback: [*c]st.PIMAGE_TLS_CALLBACK = tls.AddressOfCallBacks;
         while (callback.*) |cb| {
             std.log.info("[+] call tls callback: 0x{X}", .{@intFromPtr(cb)});
-            cb(cs.ptr, win32.DLL_PROCESS_ATTACH, null);
+            cb(cs.ptr, st.DLL_PROCESS_ATTACH, null);
             callback += 1;
         }
     }
@@ -280,8 +292,8 @@ inline fn indexOfPosLinear(comptime T: type, haystack: []const T, start_index: u
 inline fn findLdrpHandleTlsData(apis: *apiAddr) ?usize {
     var dllname = "ntdll.dll".*;
     var ntdll = apis.GetModuleHandleA.?(&dllname);
-    const dos: *win32.IMAGE_DOS_HEADER = @ptrCast(@alignCast(ntdll));
-    const nt: *win32.IMAGE_NT_HEADERS = @ptrFromInt(@intFromPtr(ntdll) + @as(usize, @as(u32, @bitCast(dos.e_lfanew))));
+    const dos: *st.IMAGE_DOS_HEADER = @ptrCast(@alignCast(ntdll));
+    const nt: *st.IMAGE_NT_HEADERS = @ptrFromInt(@intFromPtr(ntdll) + @as(usize, @as(u32, @bitCast(dos.e_lfanew))));
     const memory = @as([*c]u8, @ptrCast(ntdll))[nt.OptionalHeader.BaseOfCode..nt.OptionalHeader.SizeOfImage];
     // 先找到LdrpHandleTlsData字符串
     var fnname = x("LdrpHandleTlsData");
@@ -436,7 +448,7 @@ inline fn findLdrpHandleTlsData(apis: *apiAddr) ?usize {
         }
         const UNW_FLAG_EHANDLER = 1;
         while (true) {
-            const hdr: win32.UNWIND_INFO_HDR = @bitCast(maybeUnwindHdrPtr.*);
+            const hdr: st.UNWIND_INFO_HDR = @bitCast(maybeUnwindHdrPtr.*);
             if (hdr.Version == 1 and (hdr.Flags & UNW_FLAG_EHANDLER == UNW_FLAG_EHANDLER) and hdr.CntUnwindCodes == wantCount) {
                 break;
             }
@@ -542,13 +554,13 @@ inline fn zero(buf: [*c]u8) void {
 }
 
 fn findApi(r: *apiAddr, inst: windows.PVOID) void {
-    var dos: *win32.IMAGE_DOS_HEADER = @ptrCast(@alignCast(inst));
-    var nt = rva2va(*win32.IMAGE_NT_HEADERS, inst, @as(u32, @bitCast(dos.e_lfanew)));
-    var rva = nt.OptionalHeader.DataDirectory[win32.IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+    var dos: *st.IMAGE_DOS_HEADER = @ptrCast(@alignCast(inst));
+    var nt = rva2va(*st.IMAGE_NT_HEADERS, inst, @as(u32, @bitCast(dos.e_lfanew)));
+    var rva = nt.OptionalHeader.DataDirectory[st.IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
     if (rva == 0) {
         return;
     }
-    var exp = rva2va(*win32.IMAGE_EXPORT_DIRECTORY, inst, rva);
+    var exp = rva2va(*st.IMAGE_EXPORT_DIRECTORY, inst, rva);
     var cnt = exp.NumberOfNames;
     if (cnt == 0) {
         return;
@@ -574,7 +586,7 @@ fn findApi(r: *apiAddr, inst: windows.PVOID) void {
 fn getApi(apis: *apiAddr) bool {
     var peb = std.os.windows.peb();
     var ldr = peb.Ldr;
-    var dte: *win32.LDR_DATA_TABLE_ENTRY = @ptrCast(ldr.InLoadOrderModuleList.Flink);
+    var dte: *st.LDR_DATA_TABLE_ENTRY = @ptrCast(ldr.InLoadOrderModuleList.Flink);
     while (dte.DllBase != null) : ({
         dte = @ptrCast(dte.InLoadOrderLinks.Flink);
     }) {

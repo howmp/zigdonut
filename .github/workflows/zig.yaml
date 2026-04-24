@@ -24,9 +24,10 @@ jobs:
     - name: Test
       run: |
         .\zig-out\bin\zigdonut.exe testpe\rusthello32.exe instance32
-        .\zig-out\bin\loader32.exe
+        .\zig-out\bin\pedebug32.exe
         .\zig-out\bin\zigdonut.exe testpe\rusthello64.exe instance64
-        .\zig-out\bin\loader64.exe
+        .\zig-out\bin\pedebug64.exe
+        .\zig-out\bin\zigdonut.exe .\zig-out\bin\test_elf test_elf.sc
 
     - name: Release
       uses: softprops/action-gh-release@v1
