@@ -14,7 +14,7 @@
 
 1. 支持静态链接的PIE/ET_DYN ELF
 2. 完整的ELF loader：段映射、RELATIVE重定位、栈帧构建(auxv)
-3. Double fork脱离控制终端，后台执行，不产生僵尸集成
+3. Double fork脱离控制终端，后台执行，不产生僵尸进程
 4. 输出重定向到文件
 5. 切换工作目录到/tmp
 
