@@ -33,6 +33,10 @@ inline fn sys_fork() usize {
     return linux.syscall0(.fork);
 }
 
+inline fn sys_wait4(pid: usize, wstatus: usize, options: usize, rusage: usize) usize {
+    return linux.syscall4(.wait4, pid, wstatus, options, rusage);
+}
+
 inline fn sys_setsid() usize {
     return linux.syscall0(.setsid);
 }
@@ -349,7 +353,8 @@ pub export fn go(output_file: [*c]const u8, argc: usize, argv: [*c][*c]const u8,
             return;
         }
         if (pid1 > 0) {
-            // 父进程返回
+            // 父进程等待第一个子进程，避免僵尸进程
+            _ = sys_wait4(pid1, 0, 0, 0);
             return;
         }
         // 第一个子进程: setsid 成为新会话组长
